@@ -1,39 +1,75 @@
 import jsPDF from "jspdf";
+import autoTable, { applyPlugin } from "jspdf-autotable";
 import * as autotableModule from "jspdf-autotable";
 import { WeeklyReport, Worker } from "../types";
 import { NMSA_LOGO_BASE64 } from "./logoBase64";
 
+// Ensure autoTable plugin is registered on jsPDF class at module load
+try {
+  const rawMod: any = autotableModule;
+  const applyFn = typeof applyPlugin === "function" ? applyPlugin : (rawMod?.applyPlugin || rawMod?.default?.applyPlugin);
+  if (typeof applyFn === "function") {
+    applyFn(jsPDF);
+  }
+} catch (err) {
+  console.warn("[PDF Generator] Pre-applying plugin error in browser:", err);
+}
+
+// Universal helper to find callable autoTable function across all bundler formats
+function getCallableAutoTable(): ((doc: any, options: any) => void) | null {
+  const mod: any = autoTable;
+  const rawMod: any = autotableModule;
+
+  if (typeof mod === "function") return mod;
+  if (typeof mod?.autoTable === "function") return mod.autoTable;
+  if (typeof mod?.default === "function") return mod.default;
+  if (typeof mod?.default?.default === "function") return mod.default.default;
+  if (typeof mod?.default?.autoTable === "function") return mod.default.autoTable;
+
+  if (typeof rawMod === "function") return rawMod;
+  if (typeof rawMod?.autoTable === "function") return rawMod.autoTable;
+  if (typeof rawMod?.default === "function") return rawMod.default;
+  if (typeof rawMod?.default?.default === "function") return rawMod.default.default;
+  if (typeof rawMod?.default?.autoTable === "function") return rawMod.default.autoTable;
+
+  return null;
+}
+
 // Universal helper to invoke autoTable safely
 function safeApplyAutoTable(doc: any, options: any) {
-  const mod: any = autotableModule;
-  let fn: any = null;
-
-  if (typeof mod === "function") {
-    fn = mod;
-  } else if (typeof mod?.default === "function") {
-    fn = mod.default;
-  } else if (typeof mod?.default?.default === "function") {
-    fn = mod.default.default;
-  } else if (typeof mod?.autoTable === "function") {
-    fn = mod.autoTable;
-  } else if (typeof mod?.default?.autoTable === "function") {
-    fn = mod.default.autoTable;
-  }
-
+  // 1. Try direct callable autoTable(doc, options)
+  const fn = getCallableAutoTable();
   if (fn) {
-    fn(doc, options);
-  } else if (typeof doc.autoTable === "function") {
-    doc.autoTable(options);
-  } else if (typeof mod?.applyPlugin === "function") {
-    mod.applyPlugin(jsPDF);
-    if (typeof doc.autoTable === "function") {
-      doc.autoTable(options);
-    } else {
-      throw new Error("Gagal menginisialisasi plugin autoTable pada jsPDF");
+    try {
+      fn(doc, options);
+      return;
+    } catch (err) {
+      console.warn("[PDF Generator] Direct autoTable invocation error, trying doc.autoTable:", err);
     }
-  } else {
-    throw new Error("Modul jspdf-autotable tidak dapat diinisialisasi");
   }
+
+  // 2. Try doc.autoTable(options)
+  if (typeof doc.autoTable === "function") {
+    doc.autoTable(options);
+    return;
+  }
+
+  // 3. Try applying plugin directly to doc constructor
+  try {
+    const rawMod: any = autotableModule;
+    const applyFn = typeof applyPlugin === "function" ? applyPlugin : (rawMod?.applyPlugin || rawMod?.default?.applyPlugin);
+    if (typeof applyFn === "function") {
+      applyFn(doc.constructor || jsPDF);
+      if (typeof doc.autoTable === "function") {
+        doc.autoTable(options);
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn("[PDF Generator] Fallback applyPlugin error:", err);
+  }
+
+  throw new Error("Modul jspdf-autotable tidak dapat diinisialisasi");
 }
 
 export function generateWeeklyReportPDFBlob(report: WeeklyReport, workers: Worker[]): Blob {

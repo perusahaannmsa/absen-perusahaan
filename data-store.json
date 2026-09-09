@@ -84,6 +84,19 @@
   ],
   "attendanceLogs": [
     {
+      "id": "LOG-AUTO-1788927384496",
+      "workerId": "SYSTEM",
+      "workerName": "Sistem Otomatis NMSA",
+      "date": "2026-09-09",
+      "time": "17:00:00",
+      "latitude": 0,
+      "longitude": 0,
+      "distance": 0,
+      "address": "Server Auto-Save Jam Pulang Kerja",
+      "status": "BERHASIL",
+      "notes": "Laporan Absensi PDF berhasil disimpan otomatis pada jam pulang kerja (Tersimpan di arsip server)"
+    },
+    {
       "id": "LOG-AUTO-1788766729167",
       "workerId": "SYSTEM",
       "workerName": "Sistem Otomatis NMSA",
@@ -111,6 +124,27 @@
     }
   ],
   "fridayReports": [
+    {
+      "id": "REP-2026-09-07-2026-09-11",
+      "weekStartDate": "2026-09-07",
+      "weekEndDate": "2026-09-11",
+      "periodName": "Periode 07-11 September 2026",
+      "monthName": "September 2026",
+      "records": [
+        {
+          "workerId": "W01",
+          "attendance": {},
+          "dailyAllowance": 25000,
+          "customStatus": {},
+          "reasons": {}
+        }
+      ],
+      "isSubmitted": true,
+      "submittedAt": "2026-09-09T04:16:24.431Z",
+      "autoSavedAt": "2026-09-09 17:00 WIB (Otomatis Jam Pulang Kerja NMSA)",
+      "totalCost": 0,
+      "totalPresent": 0
+    },
     {
       "id": "REP-2026-09-07-2026-09-07",
       "weekStartDate": "2026-09-07",
@@ -148,7 +182,7 @@
   },
   "registeredAdminPhone": "",
   "waMethod": "baileys",
-  "lastDailyClosingAutoSaveDate": "2026-09-07",
+  "lastDailyClosingAutoSaveDate": "2026-09-09",
   "lastFridayAutoSaveDate": "",
   "botDispatchSettings": {
     "autoDispatchEnabled": true,
