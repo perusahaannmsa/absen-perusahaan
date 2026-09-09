@@ -247,6 +247,7 @@ export function getWhatsAppStatus() {
     error: lastError,
     registeredAdminPhone: registeredAdmin,
     botDispatchSettings: botSettings,
+    broadcastProgress: getBroadcastProgress(),
     recentLogs: botMessageLogs,
     holidays,
     featureRequests,
@@ -373,6 +374,41 @@ export async function sendWhatsAppDocument(
   }
 }
 
+export interface BroadcastProgress {
+  isRunning: boolean;
+  total: number;
+  sent: number;
+  failed: number;
+  currentWorkerName?: string;
+  nextWorkerName?: string;
+  delayRemainingSeconds?: number;
+  delayTotalSeconds?: number;
+  startedAt?: string;
+  isCompleted?: boolean;
+}
+
+let currentBroadcastProgress: BroadcastProgress = {
+  isRunning: false,
+  total: 0,
+  sent: 0,
+  failed: 0,
+};
+
+let cancelBroadcastRequested = false;
+
+export function getBroadcastProgress(): BroadcastProgress {
+  return currentBroadcastProgress;
+}
+
+export function cancelBroadcastQueue() {
+  if (currentBroadcastProgress.isRunning) {
+    cancelBroadcastRequested = true;
+    currentBroadcastProgress.isRunning = false;
+    return true;
+  }
+  return false;
+}
+
 export interface BroadcastOptions {
   appUrl: string;
   targetWorkerIds?: string[];
@@ -387,6 +423,12 @@ export async function broadcastAttendanceLinks(options: BroadcastOptions): Promi
     return { count: 0, logs: [] };
   }
 
+  // Prevent multiple concurrent broadcast queues
+  if (currentBroadcastProgress.isRunning) {
+    console.warn("[WA-Bot] Antrean broadcast link presensi sudah sedang berjalan.");
+    return { count: currentBroadcastProgress.sent, logs: [] };
+  }
+
   let state: any = {};
   try {
     state = JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
@@ -394,93 +436,163 @@ export async function broadcastAttendanceLinks(options: BroadcastOptions): Promi
     return { count: 0, logs: [] };
   }
 
-  const workers = state.workers || [];
+  const allWorkers = state.workers || [];
+  const targetWorkers = allWorkers.filter((w: any) => {
+    if (!w.phoneNumber || !w.isActive) return false;
+    if (targetWorkerIds && !targetWorkerIds.includes(w.id)) return false;
+    return true;
+  });
+
+  if (targetWorkers.length === 0) {
+    return { count: 0, logs: [] };
+  }
+
+  const settings = state.botDispatchSettings || {};
+  const isAntiBanDelayActive = settings.interMessageDelayEnabled !== false; // Default: true (Sangat Aman)
+  const minDelayMin = Math.max(0.1, Number(settings.interMessageDelayMinMinutes ?? 3));
+  const maxDelayMin = Math.max(minDelayMin, Number(settings.interMessageDelayMaxMinutes ?? 5));
+
+  cancelBroadcastRequested = false;
+  currentBroadcastProgress = {
+    isRunning: true,
+    total: targetWorkers.length,
+    sent: 0,
+    failed: 0,
+    startedAt: new Date().toLocaleTimeString("id-ID", { timeZone: "Asia/Jakarta" }),
+    isCompleted: false,
+  };
+
   let sentCount = 0;
   const newLogs: any[] = [];
   const { dayName } = getJakartaDayOfWeek();
   const todayDate = new Date().toISOString().split("T")[0];
-  const timeNowStr = new Date().toLocaleTimeString("id-ID", {
-    timeZone: "Asia/Jakarta",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
 
-  for (let i = 0; i < workers.length; i++) {
-    const worker = workers[i];
-    if (!worker.phoneNumber || !worker.isActive) continue;
-    if (targetWorkerIds && !targetWorkerIds.includes(worker.id)) continue;
+  try {
+    for (let i = 0; i < targetWorkers.length; i++) {
+      if (cancelBroadcastRequested) {
+        console.log("[WA-Bot] Broadcast dibatalkan oleh pengguna.");
+        break;
+      }
 
-    const attendUrl = `${appUrl.replace(/\/$/, "")}/?worker=${worker.id}`;
+      const worker = targetWorkers[i];
+      const nextWorker = targetWorkers[i + 1];
 
-    // Generate humanized varied message tailored to today and worker
-    let messageText = "";
-    if (style === "ai_generative") {
-      messageText = await generateAiPersonalizedMessage(worker.name, worker.role || "Karyawan", attendUrl);
-    } else {
-      messageText = generateHumanDailyMessage({
-        workerName: worker.name,
-        role: worker.role,
-        attendUrl,
-        style,
-        variationIndex: i, // Ensure varied template per worker even on same day!
+      currentBroadcastProgress.currentWorkerName = worker.name;
+      currentBroadcastProgress.nextWorkerName = nextWorker ? nextWorker.name : undefined;
+
+      const timeNowStr = new Date().toLocaleTimeString("id-ID", {
+        timeZone: "Asia/Jakarta",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
       });
-    }
 
-    const jid = formatToWaJid(worker.phoneNumber);
+      const attendUrl = `${appUrl.replace(/\/$/, "")}/?worker=${worker.id}`;
 
-    try {
-      // Simulate realistic human typing delay (2.5s - 5s)
+      // Generate humanized varied message tailored to today and worker
+      let messageText = "";
+      if (style === "ai_generative") {
+        messageText = await generateAiPersonalizedMessage(worker.name, worker.role || "Karyawan", attendUrl);
+      } else {
+        messageText = generateHumanDailyMessage({
+          workerName: worker.name,
+          role: worker.role,
+          attendUrl,
+          style,
+          variationIndex: i, // Ensure varied template per worker even on same day!
+        });
+      }
+
+      const jid = formatToWaJid(worker.phoneNumber);
+
       try {
-        await sock.sendPresenceUpdate("composing", jid);
-      } catch {}
+        // Simulate realistic human typing delay (3s - 5s)
+        try {
+          await sock.sendPresenceUpdate("composing", jid);
+        } catch {}
 
-      const typingDelay = Math.floor(Math.random() * 2500) + 2500;
-      await new Promise((r) => setTimeout(r, typingDelay));
+        const typingDelay = Math.floor(Math.random() * 2000) + 3000;
+        await new Promise((r) => setTimeout(r, typingDelay));
 
-      await sock.sendMessage(jid, { text: messageText });
-      sentCount++;
+        await sock.sendMessage(jid, { text: messageText });
+        sentCount++;
+        currentBroadcastProgress.sent = sentCount;
 
-      const logItem = {
-        id: `LOG-MSG-${Date.now()}-${worker.id}`,
-        timestamp: new Date().toISOString(),
-        date: todayDate,
-        time: `${timeNowStr} WIB`,
-        workerId: worker.id,
-        workerName: worker.name,
-        phoneNumber: worker.phoneNumber,
-        messageText,
-        status: "sent",
-        dayOfWeek: dayName,
-        isAutoScheduled,
-      };
-      newLogs.push(logItem);
-    } catch (err: any) {
-      console.error(`Failed to send message to ${worker.name}:`, err);
-      newLogs.push({
-        id: `LOG-MSG-${Date.now()}-${worker.id}`,
-        timestamp: new Date().toISOString(),
-        date: todayDate,
-        time: `${timeNowStr} WIB`,
-        workerId: worker.id,
-        workerName: worker.name,
-        phoneNumber: worker.phoneNumber,
-        messageText,
-        status: "failed",
-        error: err.message,
-        dayOfWeek: dayName,
-        isAutoScheduled,
-      });
+        const logItem = {
+          id: `LOG-MSG-${Date.now()}-${worker.id}`,
+          timestamp: new Date().toISOString(),
+          date: todayDate,
+          time: `${timeNowStr} WIB`,
+          workerId: worker.id,
+          workerName: worker.name,
+          phoneNumber: worker.phoneNumber,
+          messageText,
+          status: "sent",
+          dayOfWeek: dayName,
+          isAutoScheduled,
+        };
+        newLogs.push(logItem);
+
+        // Update logs in state periodically
+        try {
+          if (fs.existsSync(DATA_FILE)) {
+            const curState = JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
+            if (!curState.botMessageLogs) curState.botMessageLogs = [];
+            curState.botMessageLogs.unshift(logItem);
+            if (curState.botMessageLogs.length > 200) {
+              curState.botMessageLogs = curState.botMessageLogs.slice(0, 200);
+            }
+            fs.writeFileSync(DATA_FILE, JSON.stringify(curState, null, 2), "utf-8");
+          }
+        } catch {}
+      } catch (err: any) {
+        console.error(`Failed to send message to ${worker.name}:`, err);
+        currentBroadcastProgress.failed++;
+        const failLogItem = {
+          id: `LOG-MSG-${Date.now()}-${worker.id}`,
+          timestamp: new Date().toISOString(),
+          date: todayDate,
+          time: `${timeNowStr} WIB`,
+          workerId: worker.id,
+          workerName: worker.name,
+          phoneNumber: worker.phoneNumber,
+          messageText,
+          status: "failed",
+          error: err.message,
+          dayOfWeek: dayName,
+          isAutoScheduled,
+        };
+        newLogs.push(failLogItem);
+      }
+
+      // If there are more employees to send to, wait safe anti-ban delay (e.g. 3 - 5 minutes)
+      if (i < targetWorkers.length - 1 && !cancelBroadcastRequested) {
+        let delaySec = 5; // minimum fallback
+        if (isAntiBanDelayActive) {
+          // Calculate random delay between minDelayMin and maxDelayMin in seconds
+          const minSec = Math.round(minDelayMin * 60);
+          const maxSec = Math.round(maxDelayMin * 60);
+          delaySec = Math.floor(Math.random() * (maxSec - minSec + 1)) + minSec;
+          console.log(`[Anti-Ban WA] Jeda aman antar karyawan: ${delaySec} detik (${(delaySec / 60).toFixed(1)} menit) sebelum mengirim ke ${nextWorker?.name}...`);
+        }
+
+        currentBroadcastProgress.delayTotalSeconds = delaySec;
+        currentBroadcastProgress.delayRemainingSeconds = delaySec;
+
+        // Count down second-by-second so UI shows live timer
+        for (let s = delaySec; s > 0; s--) {
+          if (cancelBroadcastRequested) break;
+          currentBroadcastProgress.delayRemainingSeconds = s;
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+        currentBroadcastProgress.delayRemainingSeconds = 0;
+      }
     }
+  } finally {
+    currentBroadcastProgress.isRunning = false;
+    currentBroadcastProgress.isCompleted = true;
+    currentBroadcastProgress.delayRemainingSeconds = 0;
   }
-
-  // Persist logs in state
-  if (!state.botMessageLogs) state.botMessageLogs = [];
-  state.botMessageLogs.unshift(...newLogs);
-  if (state.botMessageLogs.length > 200) {
-    state.botMessageLogs = state.botMessageLogs.slice(0, 200);
-  }
-  fs.writeFileSync(DATA_FILE, JSON.stringify(state, null, 2), "utf-8");
 
   return { count: sentCount, logs: newLogs };
 }

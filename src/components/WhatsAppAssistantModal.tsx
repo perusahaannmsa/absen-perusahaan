@@ -27,6 +27,7 @@ import {
   UserCheck,
   Activity,
   Radio,
+  X,
 } from "lucide-react";
 import { Worker, WhatsAppStatus, BotDispatchSettings, BotMessageLog } from "../types";
 import { FeatureRequestsTab } from "./FeatureRequestsTab";
@@ -77,6 +78,9 @@ export const WhatsAppAssistantModal: React.FC<WhatsAppAssistantModalProps> = ({
       workDays: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"],
       typingDelayMin: 3,
       typingDelayMax: 6,
+      interMessageDelayEnabled: true,
+      interMessageDelayMinMinutes: 3,
+      interMessageDelayMaxMinutes: 5,
       messageStyle: "human_dynamic",
       includeLocationReminder: true,
       lastAutoDispatchDate: "",
@@ -96,6 +100,7 @@ export const WhatsAppAssistantModal: React.FC<WhatsAppAssistantModalProps> = ({
   // Broadcast
   const [broadcasting, setBroadcasting] = useState(false);
   const [broadcastResult, setBroadcastResult] = useState<string | null>(null);
+  const [cancellingBroadcast, setCancellingBroadcast] = useState(false);
 
   // Simulated live WhatsApp AI Chat
   const [chatMessages, setChatMessages] = useState<
@@ -112,15 +117,16 @@ export const WhatsAppAssistantModal: React.FC<WhatsAppAssistantModalProps> = ({
   const [loadingAi, setLoadingAi] = useState(false);
   const chatBottomRef = useRef<HTMLDivElement>(null);
 
-  // Auto-polling for QR code and WA status every 2.5 seconds when not connected
+  // Auto-polling for QR code and WA status (faster when disconnected or when broadcast is running)
   useEffect(() => {
-    if (waStatus.status !== "connected") {
-      const pollTimer = setInterval(() => {
-        onRefreshStatus();
-      }, 2500);
-      return () => clearInterval(pollTimer);
-    }
-  }, [waStatus.status, onRefreshStatus]);
+    const isBusy = waStatus.status !== "connected" || Boolean(waStatus.broadcastProgress?.isRunning);
+    const intervalMs = waStatus.broadcastProgress?.isRunning ? 1500 : waStatus.status !== "connected" ? 2500 : 8000;
+    
+    const pollTimer = setInterval(() => {
+      onRefreshStatus();
+    }, intervalMs);
+    return () => clearInterval(pollTimer);
+  }, [waStatus.status, waStatus.broadcastProgress?.isRunning, onRefreshStatus]);
 
   // Synchronize admin phone
   useEffect(() => {
@@ -261,9 +267,13 @@ export const WhatsAppAssistantModal: React.FC<WhatsAppAssistantModalProps> = ({
   };
 
   const handleBroadcastNow = async () => {
+    const delayInfo = botSettings.interMessageDelayEnabled !== false
+      ? `dengan jeda aman ${botSettings.interMessageDelayMinMinutes ?? 3} - ${botSettings.interMessageDelayMaxMinutes ?? 5} menit antar karyawan (Anti-Ban WhatsApp Aktif)`
+      : `tanpa jeda menit`;
+
     if (
       !confirm(
-        `Kirimkan link presensi ke semua karyawan aktif sekarang dengan gaya "${
+        `Kirimkan link presensi ke semua karyawan aktif sekarang ${delayInfo} dengan gaya "${
           botSettings.messageStyle === "human_dynamic"
             ? "Alami & Variatif Harian"
             : botSettings.messageStyle
@@ -285,7 +295,10 @@ export const WhatsAppAssistantModal: React.FC<WhatsAppAssistantModalProps> = ({
       });
       const data = await res.json();
       if (data.success) {
-        setBroadcastResult(`Berhasil mengirimkan pesan presensi bervariasi ke ${data.count} karyawan via WhatsApp!`);
+        setBroadcastResult(
+          data.message ||
+            `🚀 Pengiriman link presensi sedang berjalan di latar belakang dengan jeda aman 3 - 5 menit antar karyawan untuk mencegah pemblokiran WhatsApp.`
+        );
         onRefreshStatus();
       } else {
         throw new Error(data.error || "Gagal broadcast");
@@ -294,6 +307,25 @@ export const WhatsAppAssistantModal: React.FC<WhatsAppAssistantModalProps> = ({
       setBroadcastResult(`Gagal broadcast: ${err.message}`);
     } finally {
       setBroadcasting(false);
+    }
+  };
+
+  const handleCancelBroadcast = async () => {
+    if (!confirm("Hentikan proses pengiriman link presensi yang sedang berjalan di latar belakang?")) {
+      return;
+    }
+    setCancellingBroadcast(true);
+    try {
+      const res = await fetch("/api/wa/cancel-broadcast", { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        setBroadcastResult("Antrean pengiriman link presensi berhasil dihentikan.");
+        onRefreshStatus();
+      }
+    } catch (err: any) {
+      alert("Gagal membatalkan pengiriman: " + err.message);
+    } finally {
+      setCancellingBroadcast(false);
     }
   };
 
@@ -525,6 +557,84 @@ export const WhatsAppAssistantModal: React.FC<WhatsAppAssistantModalProps> = ({
           <span>5. Live Console AI & Tanya Absensi</span>
         </button>
       </div>
+
+      {/* LIVE ANTI-BAN BROADCAST PROGRESS BANNER (ACTIVE ACROSS ALL TABS) */}
+      {waStatus.broadcastProgress?.isRunning && (
+        <div className="bg-gradient-to-r from-amber-50 via-emerald-50 to-teal-50 border-2 border-emerald-500/60 rounded-2xl p-4 shadow-sm space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center space-x-2.5">
+              <span className="relative flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+              </span>
+              <h4 className="text-xs font-bold text-slate-900 flex items-center space-x-1.5">
+                <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                <span>Pengiriman Link Presensi Sedang Berjalan (Proteksi Anti-Ban WhatsApp Aktif)</span>
+              </h4>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <span className="text-[11px] font-mono font-bold bg-white px-2.5 py-1 rounded-lg border border-slate-200 text-slate-700">
+                {waStatus.broadcastProgress.sent} / {waStatus.broadcastProgress.total} Karyawan Terkirim
+              </span>
+              <button
+                onClick={handleCancelBroadcast}
+                disabled={cancellingBroadcast}
+                className="px-3 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[11px] font-semibold transition-colors flex items-center space-x-1 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>{cancellingBroadcast ? "Membatalkan..." : "Hentikan Pengiriman"}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Progress bar */}
+          <div className="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
+            <div
+              className="bg-emerald-600 h-2.5 rounded-full transition-all duration-500"
+              style={{
+                width: `${Math.max(
+                  5,
+                  Math.round(
+                    ((waStatus.broadcastProgress.sent || 0) / (waStatus.broadcastProgress.total || 1)) * 100
+                  )
+                )}%`,
+              }}
+            ></div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[11px] text-slate-600 gap-1 bg-white/80 p-2.5 rounded-xl border border-slate-200/80">
+            <div>
+              {waStatus.broadcastProgress.currentWorkerName && (
+                <span>
+                  Karyawan saat ini: <strong>{waStatus.broadcastProgress.currentWorkerName}</strong>
+                </span>
+              )}
+              {waStatus.broadcastProgress.nextWorkerName && (
+                <span className="ml-2 text-slate-500">
+                  → Menuju ke: <strong>{waStatus.broadcastProgress.nextWorkerName}</strong>
+                </span>
+              )}
+            </div>
+
+            {Boolean(waStatus.broadcastProgress.delayRemainingSeconds && waStatus.broadcastProgress.delayRemainingSeconds > 0) ? (
+              <div className="flex items-center space-x-1.5 font-semibold text-amber-700">
+                <Clock className="w-3.5 h-3.5 animate-spin" />
+                <span>
+                  Jeda anti-ban:{" "}
+                  {Math.floor(waStatus.broadcastProgress.delayRemainingSeconds / 60)}m{" "}
+                  {waStatus.broadcastProgress.delayRemainingSeconds % 60}s tersisa...
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center space-x-1.5 font-semibold text-emerald-700">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Sedang mengirim pesan...</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* TAB 1: CONNECTION & QR CODE */}
       {activeSubTab === "connection" && (
@@ -1091,15 +1201,206 @@ export const WhatsAppAssistantModal: React.FC<WhatsAppAssistantModalProps> = ({
                   </div>
                 </div>
 
-                {/* Anti-Spam Human Typing Simulator */}
-                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-                  <div className="flex items-center space-x-2 text-xs font-bold text-slate-800">
-                    <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                    <span>Simulasi Mengetik Manusia (Anti-Ban &amp; Natural Typing)</span>
+                {/* Anti-Ban & Jeda Waktu Pengiriman Antar Karyawan */}
+                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3.5">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center space-x-2">
+                      <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
+                      <div>
+                        <span className="text-xs font-bold text-slate-900 block">
+                          Proteksi Anti-Ban WhatsApp: Jeda Waktu Antar Karyawan
+                        </span>
+                        <span className="text-[11px] text-slate-500 block mt-0.5">
+                          Mencegah nomor diblokir (banned) oleh sistem deteksi spam WhatsApp saat mengirim link presensi ke banyak karyawan.
+                        </span>
+                      </div>
+                    </div>
+
+                    <label className="relative inline-flex items-center cursor-pointer ml-3 mt-1 shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={botSettings.interMessageDelayEnabled !== false}
+                        onChange={(e) =>
+                          setBotSettings({
+                            ...botSettings,
+                            interMessageDelayEnabled: e.target.checked,
+                          })
+                        }
+                        className="sr-only peer"
+                      />
+                      <div className="w-10 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
+                    </label>
                   </div>
-                  <p className="text-[11px] text-slate-600 leading-relaxed">
-                    Saat mengirim pesan ke banyak karyawan, bot WhatsApp menampilkan indikator <em>"sedang mengetik..."</em> selama 3 sampai 5 detik bergantian antar karyawan. Hal ini memastikan WhatsApp menganggap aktivitas sebagai interaksi manusia alami dan mencegah pemblokiran.
-                  </p>
+
+                  {botSettings.interMessageDelayEnabled !== false ? (
+                    <div className="space-y-2 pt-2 border-t border-slate-200">
+                      <span className="text-[11px] font-semibold text-slate-700 block">
+                        Pilih Durasi Jeda Antar Pengiriman:
+                      </span>
+
+                      {/* Option 1: 3 - 5 Menit (User's explicit preference & primary recommendation) */}
+                      <label
+                        className={`block p-3 rounded-xl border cursor-pointer transition-all ${
+                          (botSettings.interMessageDelayMinMinutes ?? 3) === 3 &&
+                          (botSettings.interMessageDelayMaxMinutes ?? 5) === 5
+                            ? "bg-emerald-50/80 border-emerald-400 ring-1 ring-emerald-400"
+                            : "bg-white border-slate-200 hover:bg-slate-50"
+                        }`}
+                      >
+                        <div className="flex items-start space-x-2.5">
+                          <input
+                            type="radio"
+                            name="delayRange"
+                            checked={
+                              (botSettings.interMessageDelayMinMinutes ?? 3) === 3 &&
+                              (botSettings.interMessageDelayMaxMinutes ?? 5) === 5
+                            }
+                            onChange={() =>
+                              setBotSettings({
+                                ...botSettings,
+                                interMessageDelayMinMinutes: 3,
+                                interMessageDelayMaxMinutes: 5,
+                              })
+                            }
+                            className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
+                          />
+                          <div>
+                            <div className="flex items-center space-x-1.5">
+                              <span className="text-xs font-bold text-slate-900">
+                                🌟 3 - 5 Menit per Karyawan
+                              </span>
+                              <span className="px-1.5 py-0.2 bg-emerald-600 text-white rounded text-[9px] font-bold">
+                                Sangat Direkomendasikan
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-600 mt-0.5 leading-relaxed">
+                              Memberi jeda acak 3 hingga 5 menit antar karyawan. Pola pengiriman 100% identik dengan manusia santai, sehingga <strong>kebal terhadap sistem auto-ban spam WhatsApp</strong>.
+                            </p>
+                          </div>
+                        </div>
+                      </label>
+
+                      {/* Option 2: 1 - 2 Menit */}
+                      <label
+                        className={`block p-3 rounded-xl border cursor-pointer transition-all ${
+                          (botSettings.interMessageDelayMinMinutes ?? 3) === 1 &&
+                          (botSettings.interMessageDelayMaxMinutes ?? 5) === 2
+                            ? "bg-emerald-50/80 border-emerald-400 ring-1 ring-emerald-400"
+                            : "bg-white border-slate-200 hover:bg-slate-50"
+                        }`}
+                      >
+                        <div className="flex items-start space-x-2.5">
+                          <input
+                            type="radio"
+                            name="delayRange"
+                            checked={
+                              (botSettings.interMessageDelayMinMinutes ?? 3) === 1 &&
+                              (botSettings.interMessageDelayMaxMinutes ?? 5) === 2
+                            }
+                            onChange={() =>
+                              setBotSettings({
+                                ...botSettings,
+                                interMessageDelayMinMinutes: 1,
+                                interMessageDelayMaxMinutes: 2,
+                              })
+                            }
+                            className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
+                          />
+                          <div>
+                            <span className="text-xs font-bold text-slate-900 block">
+                              ⚡ 1 - 2 Menit per Karyawan (Standar)
+                            </span>
+                            <p className="text-[11px] text-slate-600 mt-0.5">
+                              Jeda menengah, cocok untuk tim dengan jumlah karyawan dibawah 10 orang.
+                            </p>
+                          </div>
+                        </div>
+                      </label>
+
+                      {/* Option 3: Custom minutes */}
+                      <label
+                        className={`block p-3 rounded-xl border cursor-pointer transition-all ${
+                          ((botSettings.interMessageDelayMinMinutes ?? 3) !== 3 ||
+                            (botSettings.interMessageDelayMaxMinutes ?? 5) !== 5) &&
+                          ((botSettings.interMessageDelayMinMinutes ?? 3) !== 1 ||
+                            (botSettings.interMessageDelayMaxMinutes ?? 5) !== 2)
+                            ? "bg-emerald-50/80 border-emerald-400 ring-1 ring-emerald-400"
+                            : "bg-white border-slate-200 hover:bg-slate-50"
+                        }`}
+                      >
+                        <div className="flex items-start space-x-2.5">
+                          <input
+                            type="radio"
+                            name="delayRange"
+                            checked={
+                              ((botSettings.interMessageDelayMinMinutes ?? 3) !== 3 ||
+                                (botSettings.interMessageDelayMaxMinutes ?? 5) !== 5) &&
+                              ((botSettings.interMessageDelayMinMinutes ?? 3) !== 1 ||
+                                (botSettings.interMessageDelayMaxMinutes ?? 5) !== 2)
+                            }
+                            onChange={() =>
+                              setBotSettings({
+                                ...botSettings,
+                                interMessageDelayMinMinutes: 2,
+                                interMessageDelayMaxMinutes: 4,
+                              })
+                            }
+                            className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
+                          />
+                          <div className="flex-1">
+                            <span className="text-xs font-bold text-slate-900 block">
+                              ⚙️ Kustom Menit
+                            </span>
+                            <div className="flex items-center space-x-2 mt-2">
+                              <span className="text-[11px] text-slate-600">Min:</span>
+                              <input
+                                type="number"
+                                min="0.5"
+                                max="30"
+                                step="0.5"
+                                value={botSettings.interMessageDelayMinMinutes ?? 3}
+                                onChange={(e) =>
+                                  setBotSettings({
+                                    ...botSettings,
+                                    interMessageDelayMinMinutes: parseFloat(e.target.value) || 1,
+                                  })
+                                }
+                                className="w-16 px-2 py-1 text-xs border border-slate-300 rounded-lg bg-white"
+                              />
+                              <span className="text-[11px] text-slate-600">menit s/d Max:</span>
+                              <input
+                                type="number"
+                                min="1"
+                                max="60"
+                                step="0.5"
+                                value={botSettings.interMessageDelayMaxMinutes ?? 5}
+                                onChange={(e) =>
+                                  setBotSettings({
+                                    ...botSettings,
+                                    interMessageDelayMaxMinutes: parseFloat(e.target.value) || 2,
+                                  })
+                                }
+                                className="w-16 px-2 py-1 text-xs border border-slate-300 rounded-lg bg-white"
+                              />
+                              <span className="text-[11px] text-slate-600">menit</span>
+                            </div>
+                          </div>
+                        </div>
+                      </label>
+                    </div>
+                  ) : (
+                    <div className="p-2.5 bg-amber-50 rounded-lg border border-amber-200 text-[11px] text-amber-800">
+                      ⚠️ Peringatan: Menonaktifkan jeda waktu menit dapat membuat WhatsApp menandai pengiriman massal sebagai spam dan memblokir nomor Anda. Disarankan tetap aktif 3 - 5 menit.
+                    </div>
+                  )}
+
+                  {/* Anti-Spam Human Typing Simulator */}
+                  <div className="pt-2 border-t border-slate-200 flex items-start space-x-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                      <strong>Simulasi Mengetik Alami Terintegrasi:</strong> Bot juga otomatis menampilkan status <em>"sedang mengetik..."</em> selama 3-5 detik tepat sebelum mengirim pesan ke tiap karyawan.
+                    </p>
+                  </div>
                 </div>
               </div>
 

@@ -1,6 +1,39 @@
 import { jsPDF } from "jspdf";
-import autoTable from "jspdf-autotable";
+import * as autotableModule from "jspdf-autotable";
 import { NMSA_LOGO_BASE64 } from "../src/lib/logoBase64";
+
+// Universal helper to invoke autoTable safely regardless of bundler CJS/ESM interop
+function safeApplyAutoTable(doc: any, options: any) {
+  const mod: any = autotableModule;
+  let fn: any = null;
+
+  if (typeof mod === "function") {
+    fn = mod;
+  } else if (typeof mod?.default === "function") {
+    fn = mod.default;
+  } else if (typeof mod?.default?.default === "function") {
+    fn = mod.default.default;
+  } else if (typeof mod?.autoTable === "function") {
+    fn = mod.autoTable;
+  } else if (typeof mod?.default?.autoTable === "function") {
+    fn = mod.default.autoTable;
+  }
+
+  if (fn) {
+    fn(doc, options);
+  } else if (typeof doc.autoTable === "function") {
+    doc.autoTable(options);
+  } else if (typeof mod?.applyPlugin === "function") {
+    mod.applyPlugin(jsPDF);
+    if (typeof doc.autoTable === "function") {
+      doc.autoTable(options);
+    } else {
+      throw new Error("Gagal menginisialisasi plugin autoTable pada dokumen jsPDF");
+    }
+  } else {
+    throw new Error("Format modul jspdf-autotable tidak dikenali oleh lingkungan server");
+  }
+}
 
 export interface PdfReportRecord {
   workerId: string;
@@ -184,7 +217,7 @@ export function generateReportPdfBuffer(report: PdfReportData, workers: PdfWorke
     `Rp ${totalAllCost.toLocaleString("id-ID")}`,
   ]);
 
-  autoTable(doc, {
+  safeApplyAutoTable(doc, {
     startY: 132,
     head: [
       [

@@ -74,9 +74,25 @@ export interface BotDispatchSettings {
   workDays: string[]; // ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"]
   typingDelayMin: number; // e.g. 3 (seconds)
   typingDelayMax: number; // e.g. 6 (seconds)
+  interMessageDelayEnabled?: boolean; // default: true
+  interMessageDelayMinMinutes?: number; // default: 3 (minutes)
+  interMessageDelayMaxMinutes?: number; // default: 5 (minutes)
   messageStyle: "human_dynamic" | "ai_generative" | "formal" | "friendly";
   includeLocationReminder: boolean;
   lastAutoDispatchDate?: string; // YYYY-MM-DD
+}
+
+export interface BroadcastProgress {
+  isRunning: boolean;
+  total: number;
+  sent: number;
+  failed: number;
+  currentWorkerName?: string;
+  nextWorkerName?: string;
+  delayRemainingSeconds?: number;
+  delayTotalSeconds?: number;
+  startedAt?: string;
+  isCompleted?: boolean;
 }
 
 export interface BotMessageLog {
@@ -128,6 +144,7 @@ export interface WhatsAppStatus {
   autoReplyEnabled?: boolean;
   lastFridayAutoSave?: string;
   botDispatchSettings?: BotDispatchSettings;
+  broadcastProgress?: BroadcastProgress;
   recentLogs?: BotMessageLog[];
   holidays?: HolidayEntry[];
   featureRequests?: FeatureRequestEntry[];

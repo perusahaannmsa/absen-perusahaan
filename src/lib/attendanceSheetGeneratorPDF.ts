@@ -1,7 +1,40 @@
 import jsPDF from "jspdf";
-import "jspdf-autotable";
+import * as autotableModule from "jspdf-autotable";
 import { WeeklyReport, Worker } from "../types";
 import { NMSA_LOGO_BASE64 } from "./logoBase64";
+
+// Universal helper to invoke autoTable safely
+function safeApplyAutoTable(doc: any, options: any) {
+  const mod: any = autotableModule;
+  let fn: any = null;
+
+  if (typeof mod === "function") {
+    fn = mod;
+  } else if (typeof mod?.default === "function") {
+    fn = mod.default;
+  } else if (typeof mod?.default?.default === "function") {
+    fn = mod.default.default;
+  } else if (typeof mod?.autoTable === "function") {
+    fn = mod.autoTable;
+  } else if (typeof mod?.default?.autoTable === "function") {
+    fn = mod.default.autoTable;
+  }
+
+  if (fn) {
+    fn(doc, options);
+  } else if (typeof doc.autoTable === "function") {
+    doc.autoTable(options);
+  } else if (typeof mod?.applyPlugin === "function") {
+    mod.applyPlugin(jsPDF);
+    if (typeof doc.autoTable === "function") {
+      doc.autoTable(options);
+    } else {
+      throw new Error("Gagal menginisialisasi plugin autoTable pada jsPDF");
+    }
+  } else {
+    throw new Error("Modul jspdf-autotable tidak dapat diinisialisasi");
+  }
+}
 
 export function generateWeeklyReportPDFBlob(report: WeeklyReport, workers: Worker[]): Blob {
   // Use landscape A4 for comfortable multi-column view
@@ -166,7 +199,7 @@ export function generateWeeklyReportPDFBlob(report: WeeklyReport, workers: Worke
     `Rp ${totalAllCost.toLocaleString("id-ID")}`,
   ]);
 
-  (doc as any).autoTable({
+  safeApplyAutoTable(doc, {
     startY: 132,
     head: [
       [

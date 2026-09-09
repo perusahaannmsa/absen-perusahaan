@@ -88,7 +88,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch shared state from server
+  // Fetch shared state from server with resilient retry & offline fallback
   const loadState = useCallback(async () => {
     try {
       const res = await fetch("/api/shared-state");
@@ -100,11 +100,23 @@ export default function App() {
         if (data.fridayReports) setFridayReports(data.fridayReports);
         if (data.officeLocation) setOfficeLocation(data.officeLocation);
         if (data.googleDriveToken) setGoogleDriveToken(data.googleDriveToken);
+        try {
+          localStorage.setItem("nmsa_cached_state", JSON.stringify(data));
+        } catch {}
       }
     } catch (e) {
-      console.error("Failed to load shared state:", e);
+      // Graceful fallback during server startup / network reconnects
+      console.warn("Koneksi server sedang sinkronisasi:", e);
+      try {
+        const cached = localStorage.getItem("nmsa_cached_state");
+        if (cached) {
+          const data = JSON.parse(cached);
+          if (data.workers && workers.length === 0) setWorkers(data.workers);
+          if (data.attendanceRecords && attendanceRecords.length === 0) setAttendanceRecords(data.attendanceRecords);
+        }
+      } catch {}
     }
-  }, []);
+  }, [workers.length, attendanceRecords.length]);
 
   // Check URL query parameters for direct worker attendance link or OAuth callback
   useEffect(() => {
@@ -127,7 +139,7 @@ export default function App() {
     }
   }, [workers, loadState]);
 
-  // Fetch WhatsApp status
+  // Fetch WhatsApp status with graceful retry
   const loadWaStatus = useCallback(async () => {
     try {
       const res = await fetch("/api/wa/status");
@@ -136,11 +148,24 @@ export default function App() {
         setWaStatus(data);
       }
     } catch (e) {
-      console.error("Failed to load WA status:", e);
+      console.warn("Status WhatsApp sedang sinkronisasi:", e);
     }
   }, []);
 
   useEffect(() => {
+    // Immediate load from local cache for instant zero-latency UI
+    try {
+      const cached = localStorage.getItem("nmsa_cached_state");
+      if (cached) {
+        const data = JSON.parse(cached);
+        if (data.workers) setWorkers(data.workers);
+        if (data.attendanceRecords) setAttendanceRecords(data.attendanceRecords);
+        if (data.attendanceLogs) setAttendanceLogs(data.attendanceLogs);
+        if (data.fridayReports) setFridayReports(data.fridayReports);
+        if (data.officeLocation) setOfficeLocation(data.officeLocation);
+      }
+    } catch {}
+
     loadState();
     loadWaStatus();
 

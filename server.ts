@@ -13,6 +13,8 @@ import {
   sendWhatsAppMessage,
   sendWhatsAppDocument,
   broadcastAttendanceLinks,
+  getBroadcastProgress,
+  cancelBroadcastQueue,
   resetWhatsAppSession,
   requestPairingCode,
   handleKeepAlivePing,
@@ -44,6 +46,20 @@ dotenv.config();
 
 const app = express();
 app.set("trust proxy", 1);
+
+// CORS and Cache Control for reliable API communication
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+  if (req.path.startsWith("/api/")) {
+    res.header("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  }
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
 
 // AI Studio dev and production servers strictly require port 3000
 const PORT = 3000;
@@ -694,22 +710,53 @@ app.get("/api/wa/preview-messages", async (req, res) => {
   }
 });
 
-app.post("/api/wa/broadcast-links", async (req, res) => {
+app.post("/api/wa/broadcast-links", (req, res) => {
   try {
     const { appUrl, targetWorkerIds, style } = req.body;
     const url = appUrl || process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
     const state = readState();
     const effectiveStyle = style || state.botDispatchSettings?.messageStyle || "human_dynamic";
-    const result = await broadcastAttendanceLinks({
+
+    const currentProgress = getBroadcastProgress();
+    if (currentProgress.isRunning) {
+      return res.json({
+        success: true,
+        alreadyRunning: true,
+        message: "Pengiriman link presensi sedang berjalan di latar belakang.",
+        progress: currentProgress,
+      });
+    }
+
+    // Launch asynchronously in background so HTTP response does not time out during 3-5 min inter-worker delay
+    broadcastAttendanceLinks({
       appUrl: url,
       targetWorkerIds,
       style: effectiveStyle,
       isAutoScheduled: false,
+    }).then((result) => {
+      console.log(`[WA-Broadcast] Selesai mengirim link presensi ke ${result.count} karyawan.`);
+    }).catch((err) => {
+      console.error("[WA-Broadcast] Gagal menjalankan background broadcast:", err.message);
     });
-    res.json({ success: true, count: result.count, logs: result.logs });
+
+    res.json({
+      success: true,
+      runningInBackground: true,
+      message: "Pengiriman link presensi ke semua karyawan telah dimulai di latar belakang dengan jeda waktu aman 3 - 5 menit per karyawan untuk mencegah pemblokiran (ban spam) oleh WhatsApp.",
+      progress: getBroadcastProgress(),
+    });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
+});
+
+app.get("/api/wa/broadcast-progress", (req, res) => {
+  res.json({ success: true, progress: getBroadcastProgress() });
+});
+
+app.post("/api/wa/cancel-broadcast", (req, res) => {
+  const cancelled = cancelBroadcastQueue();
+  res.json({ success: true, cancelled, progress: getBroadcastProgress() });
 });
 
 app.post("/api/wa/send-test-preview", async (req, res) => {
