@@ -7,7 +7,7 @@ import {
   onAuthStateChanged,
   User,
 } from "firebase/auth";
-import { getFirestore, doc, setDoc, getDocFromServer } from "firebase/firestore";
+import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
 
 // Initialize Firebase
@@ -28,15 +28,13 @@ googleProvider.setCustomParameters({
   prompt: "select_account",
 });
 
-// Test Firestore Connection on boot per Skill Guidelines
+// Test Firestore Connection gracefully with offline support
 export async function testFirestoreConnection(): Promise<boolean> {
   try {
-    await getDocFromServer(doc(db, "test", "connection"));
+    await getDoc(doc(db, "test", "connection"));
     return true;
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("the client is offline")) {
-      console.warn("Firestore client is offline or rules not allowing test doc.");
-    }
+  } catch (error: any) {
+    // Gracefully handle offline or network hiccups without noisy errors
     return false;
   }
 }
@@ -127,7 +125,3 @@ export function subscribeToAuth(callback: (user: User | null) => void) {
   return onAuthStateChanged(auth, callback);
 }
 
-// Execute connection test on import
-testFirestoreConnection().catch((err) => {
-  console.debug("Firestore test connection completed with notice:", err?.message);
-});

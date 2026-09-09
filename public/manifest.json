@@ -1,0 +1,33 @@
+{
+  "id": "/",
+  "name": "Absen Harian NMSA",
+  "short_name": "Absen NMSA",
+  "description": "Sistem presensi karyawan PT. Nusantara Mineral Sukses Abadi (NMSA)",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/logo-nmsa.jpg",
+      "sizes": "192x192",
+      "type": "image/jpeg",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo-nmsa.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo-nmsa.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "maskable"
+    }
+  ],
+  "categories": ["business", "productivity"]
+}
